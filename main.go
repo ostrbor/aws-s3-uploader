@@ -1,18 +1,28 @@
 package main
 
 import (
-	"fmt"
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/streadway/amqp"
+	"log"
 	"os"
 )
 
+type queueMessage struct {
+	FileName                 string `json:"file_name"`
+	Base64EncodedFileContent string `json:"base64_encoded_file_content"`
+}
+
 func main() {
+	amqpUrl := getEnv("AMQP_URL")
+	amqpQueueName := getEnv("AMQP_QUEUE_NAME")
+
 	var bucket, key string
-	var file *os.File
-	defer file.Close()
 	// TODO get bucket, key and file from rabbitmq
 
 	sess := session.Must(session.NewSession())
@@ -20,8 +30,7 @@ func main() {
 
 	result, err := svc.ListBuckets(nil)
 	if err != nil {
-		fmt.Println("Unable to list buckets")
-		os.Exit(1)
+		log.Fatal("unable to list buckets")
 	}
 	var found bool
 	for _, b := range result.Buckets {
@@ -35,20 +44,64 @@ func main() {
 			Bucket: aws.String(bucket),
 		})
 		if err != nil {
-			fmt.Println("Unable to create bucket")
-			os.Exit(1)
+			log.Fatal("unable to create bucket")
 		}
 	}
 
 	uploader := s3manager.NewUploader(sess)
-	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   file,
-	})
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+
+	for message := range setUpRabbitMQ(amqpUrl, amqpQueueName) {
+		m := &queueMessage{}
+		err := json.Unmarshal(message.Body, m)
+		if err != nil {
+			message.Nack(false, true)
+			log.Fatal("unable to unmarshal", message.Body)
+		}
+
+		fc, err := base64.StdEncoding.DecodeString(m.Base64EncodedFileContent)
+		if err != nil {
+			message.Nack(false, true)
+			log.Fatal("unable to decode")
+		}
+
+		_, err = uploader.Upload(&s3manager.UploadInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(fc),
+		})
+		if err != nil {
+			message.Nack(false, true)
+			log.Fatal("unable to upload")
+		}
 	}
 
+}
+
+func setUpRabbitMQ(amqpUrl, queueName string) <-chan amqp.Delivery {
+	amqpConn, err := amqp.Dial(amqpUrl)
+	if err != nil {
+		log.Fatal(err)
+	}
+	amqpChannel, err := amqpConn.Channel()
+	if err != nil {
+		log.Fatal(err)
+	}
+	amqpChannel.Qos(1, 0, false)
+	amqpQueue, err := amqpChannel.QueueDeclare(queueName, true, false, false, false, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	messageChannel, err := amqpChannel.Consume(amqpQueue.Name, "", false, false, false, false, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return messageChannel
+}
+
+func getEnv(k string) (v string) {
+	v = os.Getenv(k)
+	if v == "" {
+		log.Fatalf("%v must be set\n", k)
+	}
+	return v
 }
