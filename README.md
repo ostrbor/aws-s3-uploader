@@ -13,7 +13,7 @@ Fail fast approach, in case of any error send NACK to RABBITMQ and exit.
       - AWS_SECRET_ACCESS_KEY=SECRET
       - AWS_S3_BUCKET=bucket
 
-2 _Upload into RABBITMQ JSON message:_
+2 _Publish RABBITMQ JSON message:_
 
 ```json
 {
