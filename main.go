@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -50,8 +51,10 @@ func main() {
 			})
 			if err != nil {
 				qmr.Nack(false, true)
-				log.Fatal("unable to upload")
+				log.Fatalf("unable to upload: %v", err)
 			}
+			qmr.Ack(false)
+			fmt.Println("successfully uploaded ", f.Key)
 		}
 	}
 }
@@ -60,12 +63,11 @@ func createBucketIfNotExists(sess *session.Session, bucketName string) {
 	svc := s3.New(sess)
 	output, err := svc.ListBuckets(nil)
 	if err != nil {
-		log.Fatal("unable to list buckets")
+		log.Fatalf("unable to list buckets: %v; sess: %v", err, sess)
 	}
 	var found bool
 	for _, b := range output.Buckets {
-		bucketName := aws.StringValue(b.Name)
-		if bucketName == bucketName {
+		if bucketName == aws.StringValue(b.Name) {
 			found = true
 		}
 	}
@@ -74,8 +76,9 @@ func createBucketIfNotExists(sess *session.Session, bucketName string) {
 			Bucket: aws.String(bucketName),
 		})
 		if err != nil {
-			log.Fatal("unable to create bucket " + bucketName)
+			log.Fatalf("unable to create bucket %s", bucketName)
 		}
+		fmt.Println("successfully created bucket ", bucketName)
 	}
 }
 

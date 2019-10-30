@@ -1,7 +1,7 @@
 version: '2.1'
 
 services:
-  aws-s3-uploader:
+  app:
     build: .
     environment:
       - AMQP_URL=amqp://guest:guest@rabbitmq:5672/

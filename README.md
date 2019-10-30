@@ -19,8 +19,8 @@ Fail fast approach, in case of any error send NACK to RABBITMQ and exit.
 {
   "files": [
     {
-      "key": "/path/to/file.txt",
-      "file_content_base64": "base64 encoded file"
+      "key": "/2019/30/10/hi.txt",
+      "file_content_base64": "aGVsbG8="
     }
   ]
 }
