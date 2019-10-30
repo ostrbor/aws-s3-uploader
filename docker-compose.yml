@@ -5,10 +5,11 @@ services:
     build: .
     environment:
       - AMQP_URL=amqp://guest:guest@rabbitmq:5672/
-      - AMQP_QUEUE_NAME=aws.s3.uploader
+      - AMQP_QUEUE=aws.s3.uploader
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=AKID
       - AWS_SECRET_ACCESS_KEY=SECRET
+      - AWS_S3_BUCKET=bucket
     volumes:
       - /etc/localtime:/etc/localtime:ro
     depends_on:

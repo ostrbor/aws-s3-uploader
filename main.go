@@ -14,70 +14,72 @@ import (
 )
 
 type queueMessage struct {
-	FileName                 string `json:"file_name"`
-	Base64EncodedFileContent string `json:"base64_encoded_file_content"`
+	Files []struct {
+		Key               string `json:"key"`
+		FileContentBase64 string `json:"file_content_base64"`
+	} `json:"files"`
 }
 
 func main() {
 	amqpUrl := getEnv("AMQP_URL")
-	amqpQueueName := getEnv("AMQP_QUEUE_NAME")
-
-	var bucket, key string
-	// TODO get bucket, key and file from rabbitmq
+	amqpQueueName := getEnv("AMQP_QUEUE")
+	bucketName := getEnv("AWS_S3_BUCKET")
 
 	sess := session.Must(session.NewSession())
-	svc := s3.New(sess)
+	createBucketIfNotExists(sess, bucketName)
+	uploader := s3manager.NewUploader(sess)
 
-	result, err := svc.ListBuckets(nil)
+	for qmr := range queueMessagesRaw(amqpUrl, amqpQueueName) {
+		m := &queueMessage{}
+		err := json.Unmarshal(qmr.Body, m)
+		if err != nil {
+			qmr.Nack(false, true)
+			log.Fatalf("unable to unmarshal %s", qmr.Body)
+		}
+
+		for _, f := range m.Files {
+			fc, err := base64.StdEncoding.DecodeString(f.FileContentBase64)
+			if err != nil {
+				qmr.Nack(false, true)
+				log.Fatalf("unable to decode file %s", f.Key)
+			}
+			_, err = uploader.Upload(&s3manager.UploadInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(f.Key),
+				Body:   bytes.NewReader(fc),
+			})
+			if err != nil {
+				qmr.Nack(false, true)
+				log.Fatal("unable to upload")
+			}
+		}
+	}
+}
+
+func createBucketIfNotExists(sess *session.Session, bucketName string) {
+	svc := s3.New(sess)
+	output, err := svc.ListBuckets(nil)
 	if err != nil {
 		log.Fatal("unable to list buckets")
 	}
 	var found bool
-	for _, b := range result.Buckets {
+	for _, b := range output.Buckets {
 		bucketName := aws.StringValue(b.Name)
-		if bucketName == bucket {
+		if bucketName == bucketName {
 			found = true
 		}
 	}
 	if !found {
 		_, err = svc.CreateBucket(&s3.CreateBucketInput{
-			Bucket: aws.String(bucket),
+			Bucket: aws.String(bucketName),
 		})
 		if err != nil {
-			log.Fatal("unable to create bucket")
+			log.Fatal("unable to create bucket " + bucketName)
 		}
 	}
-
-	uploader := s3manager.NewUploader(sess)
-
-	for message := range setUpRabbitMQ(amqpUrl, amqpQueueName) {
-		m := &queueMessage{}
-		err := json.Unmarshal(message.Body, m)
-		if err != nil {
-			message.Nack(false, true)
-			log.Fatal("unable to unmarshal", message.Body)
-		}
-
-		fc, err := base64.StdEncoding.DecodeString(m.Base64EncodedFileContent)
-		if err != nil {
-			message.Nack(false, true)
-			log.Fatal("unable to decode")
-		}
-
-		_, err = uploader.Upload(&s3manager.UploadInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			Body:   bytes.NewReader(fc),
-		})
-		if err != nil {
-			message.Nack(false, true)
-			log.Fatal("unable to upload")
-		}
-	}
-
 }
 
-func setUpRabbitMQ(amqpUrl, queueName string) <-chan amqp.Delivery {
+func queueMessagesRaw(amqpUrl, queueName string) <-chan amqp.Delivery {
 	amqpConn, err := amqp.Dial(amqpUrl)
 	if err != nil {
 		log.Fatal(err)
